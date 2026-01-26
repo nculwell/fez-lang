@@ -108,6 +108,9 @@ impl eframe::App for GlyphMapperApp {
                 for event in &i.events {
                     if let egui::Event::Text(text) = event {
                         if let Some(c) = text.chars().next() {
+                            let c = c.to_ascii_uppercase();
+                            // Remove any existing mapping that uses this character
+                            self.mappings.retain(|_, &mut v| v != c);
                             self.mappings.insert(selected_id, c);
                         }
                     }
