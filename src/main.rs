@@ -274,6 +274,32 @@ fn load_mappings() -> HashMap<u32, char> {
         .collect()
 }
 
+fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    // Load Hack font
+    let font_data = std::fs::read("fonts/Hack/Hack-Regular.ttf")
+        .expect("Failed to read Hack-Regular.ttf");
+
+    fonts.font_data.insert(
+        "Hack".to_owned(),
+        egui::FontData::from_owned(font_data).into(),
+    );
+
+    // Set Hack as the primary font for all text styles
+    fonts.families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(0, "Hack".to_owned());
+
+    fonts.families
+        .entry(egui::FontFamily::Monospace)
+        .or_default()
+        .insert(0, "Hack".to_owned());
+
+    ctx.set_fonts(fonts);
+}
+
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -285,6 +311,9 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Fez Glyph Mapper",
         options,
-        Box::new(|_cc| Ok(Box::new(GlyphMapperApp::new()))),
+        Box::new(|cc| {
+            setup_fonts(&cc.egui_ctx);
+            Ok(Box::new(GlyphMapperApp::new()))
+        }),
     )
 }
