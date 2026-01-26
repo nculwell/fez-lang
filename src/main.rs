@@ -1,6 +1,6 @@
 mod decoder;
 
-use decoder::{parse_image, bitmap_to_rgba, CharacterRegistry, Bitmap};
+use decoder::{parse_image, bitmap_to_rgba, CharacterRegistry};
 use eframe::egui;
 use std::collections::HashMap;
 use std::fs;
