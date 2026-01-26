@@ -1,6 +1,6 @@
 mod decoder;
 
-use decoder::{parse_image, bitmap_to_rgba, CharacterRegistry};
+use decoder::{parse_image, bitmap_to_rgba, CharacterRegistry, GLYPH_TEXTURE_SIZE};
 use eframe::egui;
 use std::collections::HashMap;
 use std::fs;
@@ -70,7 +70,8 @@ impl GlyphMapperApp {
 
         for (id, bitmap) in self.registry.bitmaps.iter().enumerate() {
             let rgba = bitmap_to_rgba(bitmap);
-            let image = egui::ColorImage::from_rgba_unmultiplied([22, 22], &rgba);
+            let size = GLYPH_TEXTURE_SIZE;
+            let image = egui::ColorImage::from_rgba_unmultiplied([size, size], &rgba);
             let texture = ctx.load_texture(
                 format!("glyph_{}", id),
                 image,

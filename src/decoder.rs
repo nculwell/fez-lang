@@ -103,15 +103,35 @@ pub fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<
     Ok(lines)
 }
 
-/// Convert a bitmap to an RGBA image buffer for egui texture
+/// Size of glyph texture with margin (22 + 4*2 = 30)
+pub const GLYPH_TEXTURE_SIZE: usize = 30;
+const MARGIN: usize = 4;
+
+/// Convert a bitmap to an RGBA image buffer for egui texture with black margin
 pub fn bitmap_to_rgba(bitmap: &Bitmap) -> Vec<u8> {
-    let mut rgba = Vec::with_capacity(22 * 22 * 4);
-    for &pixel in bitmap {
-        let val = if pixel == 1 { 255 } else { 0 };
-        rgba.push(val); // R
-        rgba.push(val); // G
-        rgba.push(val); // B
-        rgba.push(255); // A
+    let mut rgba = Vec::with_capacity(GLYPH_TEXTURE_SIZE * GLYPH_TEXTURE_SIZE * 4);
+
+    for y in 0..GLYPH_TEXTURE_SIZE {
+        for x in 0..GLYPH_TEXTURE_SIZE {
+            // Check if we're in the margin area
+            let in_margin = x < MARGIN || x >= GLYPH_TEXTURE_SIZE - MARGIN
+                         || y < MARGIN || y >= GLYPH_TEXTURE_SIZE - MARGIN;
+
+            let val = if in_margin {
+                0 // Black margin
+            } else {
+                // Map to original bitmap coordinates
+                let bx = x - MARGIN;
+                let by = y - MARGIN;
+                let pixel = bitmap[by * 22 + bx];
+                if pixel == 1 { 255 } else { 0 }
+            };
+
+            rgba.push(val); // R
+            rgba.push(val); // G
+            rgba.push(val); // B
+            rgba.push(255); // A
+        }
     }
     rgba
 }
