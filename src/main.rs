@@ -89,7 +89,7 @@ impl GlyphMapperApp {
         } else if let Some(&c) = self.mappings.get(&id) {
             c.to_string()
         } else {
-            format!("[{}]", id)
+            "*".to_string()
         }
     }
 
