@@ -204,14 +204,21 @@ impl eframe::App for GlyphMapperApp {
                     ui.heading(format!("=== {} ===", filename));
                     ui.add_space(4.0);
 
+                    let mut clicked_glyph: Option<u32> = None;
                     ui.scope(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
                         for line in lines {
                             ui.horizontal(|ui| {
-                                // Left side: show glyphs with no spacing
+                                // Left side: show glyphs with no spacing (clickable)
                                 for &id in line {
                                     if let Some(texture) = self.glyph_textures.get(id as usize) {
-                                        ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(20.0, 20.0)));
+                                        let response = ui.add(
+                                            egui::ImageButton::new(egui::Image::new(texture).fit_to_exact_size(egui::vec2(20.0, 20.0)))
+                                                .frame(false)
+                                        );
+                                        if response.clicked() && id != 0 {
+                                            clicked_glyph = Some(id);
+                                        }
                                     }
                                 }
 
@@ -225,6 +232,18 @@ impl eframe::App for GlyphMapperApp {
                             });
                         }
                     });
+                    if let Some(id) = clicked_glyph {
+                        self.selected_glyph = Some(id);
+                    }
+
+                    // Summary: all decoded text on one line
+                    ui.add_space(8.0);
+                    let full_decoded: String = lines
+                        .iter()
+                        .map(|line| self.decode_line(line))
+                        .collect::<Vec<_>>()
+                        .join("");
+                    ui.monospace(&full_decoded);
 
                     ui.add_space(12.0);
                 }
