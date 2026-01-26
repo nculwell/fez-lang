@@ -204,24 +204,27 @@ impl eframe::App for GlyphMapperApp {
                     ui.heading(format!("=== {} ===", filename));
                     ui.add_space(4.0);
 
-                    for line in lines {
-                        ui.horizontal(|ui| {
-                            // Left side: show glyphs
-                            for &id in line {
-                                if let Some(texture) = self.glyph_textures.get(id as usize) {
-                                    ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(20.0, 20.0)));
+                    ui.scope(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                        for line in lines {
+                            ui.horizontal(|ui| {
+                                // Left side: show glyphs with no spacing
+                                for &id in line {
+                                    if let Some(texture) = self.glyph_textures.get(id as usize) {
+                                        ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(20.0, 20.0)));
+                                    }
                                 }
-                            }
 
-                            ui.add_space(20.0);
-                            ui.separator();
-                            ui.add_space(10.0);
+                                ui.add_space(20.0);
+                                ui.separator();
+                                ui.add_space(10.0);
 
-                            // Right side: show decoded text
-                            let decoded = self.decode_line(line);
-                            ui.monospace(&decoded);
-                        });
-                    }
+                                // Right side: show decoded text
+                                let decoded = self.decode_line(line);
+                                ui.monospace(&decoded);
+                            });
+                        }
+                    });
 
                     ui.add_space(12.0);
                 }
