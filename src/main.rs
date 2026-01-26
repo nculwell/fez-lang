@@ -143,10 +143,12 @@ impl eframe::App for GlyphMapperApp {
                         .show(ui, |ui| {
                             for (id, texture) in self.glyph_textures.iter().enumerate() {
                                 let id = id as u32;
+                                if id == 0 {
+                                    // Skip the space glyph in the palette
+                                    continue;
+                                }
                                 let is_selected = self.selected_glyph == Some(id);
-                                let mapping_str = if id == 0 {
-                                    "SPC".to_string()
-                                } else if let Some(&c) = self.mappings.get(&id) {
+                                let mapping_str = if let Some(&c) = self.mappings.get(&id) {
                                     c.to_string()
                                 } else {
                                     "?".to_string()
@@ -154,18 +156,18 @@ impl eframe::App for GlyphMapperApp {
 
                                 ui.vertical(|ui| {
                                     let response = ui.add(
-                                        egui::ImageButton::new(egui::Image::new(texture).fit_to_exact_size(egui::vec2(22.0, 22.0)))
+                                        egui::ImageButton::new(egui::Image::new(texture).fit_to_exact_size(egui::vec2(30.0, 30.0)))
                                             .selected(is_selected)
                                     );
 
-                                    if response.clicked() && id != 0 {
+                                    if response.clicked() {
                                         self.selected_glyph = Some(id);
                                     }
 
-                                    ui.label(format!("{}: {}", id, mapping_str));
+                                    ui.label(&mapping_str);
                                 });
 
-                                if (id + 1) % cols == 0 {
+                                if id % cols == 0 {
                                     ui.end_row();
                                 }
                             }
@@ -175,16 +177,18 @@ impl eframe::App for GlyphMapperApp {
                     ui.separator();
 
                     if let Some(selected_id) = self.selected_glyph {
-                        ui.heading(format!("Selected: Glyph {}", selected_id));
-                        if let Some(texture) = self.glyph_textures.get(selected_id as usize) {
-                            ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(44.0, 44.0)));
-                        }
-
-                        let current_mapping = self.mappings.get(&selected_id)
-                            .map(|c| c.to_string())
-                            .unwrap_or_else(|| "(unmapped)".to_string());
-                        ui.label(format!("Current mapping: {}", current_mapping));
-                        ui.label("Type a character to map this glyph");
+                        ui.horizontal(|ui| {
+                            if let Some(texture) = self.glyph_textures.get(selected_id as usize) {
+                                ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(44.0, 44.0)));
+                            }
+                            ui.vertical(|ui| {
+                                let current_mapping = self.mappings.get(&selected_id)
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| "(unmapped)".to_string());
+                                ui.label(format!("Mapping: {}", current_mapping));
+                                ui.label("Type a character to map");
+                            });
+                        });
                     } else {
                         ui.label("Click a glyph to select it");
                     }
@@ -201,8 +205,22 @@ impl eframe::App for GlyphMapperApp {
                     ui.add_space(4.0);
 
                     for line in lines {
-                        let decoded = self.decode_line(line);
-                        ui.monospace(&decoded);
+                        ui.horizontal(|ui| {
+                            // Left side: show glyphs
+                            for &id in line {
+                                if let Some(texture) = self.glyph_textures.get(id as usize) {
+                                    ui.add(egui::Image::new(texture).fit_to_exact_size(egui::vec2(20.0, 20.0)));
+                                }
+                            }
+
+                            ui.add_space(20.0);
+                            ui.separator();
+                            ui.add_space(10.0);
+
+                            // Right side: show decoded text
+                            let decoded = self.decode_line(line);
+                            ui.monospace(&decoded);
+                        });
                     }
 
                     ui.add_space(12.0);
