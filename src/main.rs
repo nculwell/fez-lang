@@ -91,7 +91,7 @@ fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<Vec<
     const CHAR_WIDTH: u32 = 22;
     const CHAR_HEIGHT: u32 = 22;
     const H_GAP: u32 = 4;
-    const V_GAP: u32 = 7;
+    const V_GAP: u32 = 6;
     const H_STRIDE: u32 = CHAR_WIDTH + H_GAP;  // 26
     const V_STRIDE: u32 = CHAR_HEIGHT + V_GAP; // 29
 
@@ -155,7 +155,7 @@ fn main() {
         match parse_image(path, &mut registry) {
             Ok(lines) => {
                 for line in lines {
-                    let line_str: Vec<String> = line.iter().map(|id| id.to_string()).collect();
+                    let line_str: Vec<String> = line.iter().map(|id| format!("{:2}", id)).collect();
                     println!("{}", line_str.join(" "));
                 }
             }
