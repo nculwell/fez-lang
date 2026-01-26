@@ -1,10 +1,24 @@
-use image::Luma;
+use image::{GrayImage, Luma};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 /// A 22x22 bitmap represented as 484 bits (each element is 0 or 1)
 type Bitmap = Vec<u8>;
+
+/// 3x5 pixel font for digits 0-9
+const DIGIT_FONT: [[u8; 15]; 10] = [
+    [1,1,1, 1,0,1, 1,0,1, 1,0,1, 1,1,1], // 0
+    [0,1,0, 1,1,0, 0,1,0, 0,1,0, 1,1,1], // 1
+    [1,1,1, 0,0,1, 1,1,1, 1,0,0, 1,1,1], // 2
+    [1,1,1, 0,0,1, 1,1,1, 0,0,1, 1,1,1], // 3
+    [1,0,1, 1,0,1, 1,1,1, 0,0,1, 0,0,1], // 4
+    [1,1,1, 1,0,0, 1,1,1, 0,0,1, 1,1,1], // 5
+    [1,1,1, 1,0,0, 1,1,1, 1,0,1, 1,1,1], // 6
+    [1,1,1, 0,0,1, 0,0,1, 0,0,1, 0,0,1], // 7
+    [1,1,1, 1,0,1, 1,1,1, 1,0,1, 1,1,1], // 8
+    [1,1,1, 1,0,1, 1,1,1, 0,0,1, 1,1,1], // 9
+];
 
 /// Character registry mapping bitmaps to IDs
 struct CharacterRegistry {
@@ -153,4 +167,87 @@ fn main() {
     }
 
     eprintln!("Found {} unique glyphs (including empty space as ID 0)", registry.next_id);
+
+    // Generate debug PNG
+    generate_glyph_map(&registry);
+}
+
+/// Draw a digit at the specified position in the image
+fn draw_digit(img: &mut GrayImage, digit: u8, x: u32, y: u32) {
+    let font = &DIGIT_FONT[digit as usize];
+    for dy in 0..5 {
+        for dx in 0..3 {
+            if font[dy * 3 + dx] == 1 {
+                img.put_pixel(x + dx as u32, y + dy as u32, Luma([255]));
+            }
+        }
+    }
+}
+
+/// Draw a number (multiple digits) at the specified position
+fn draw_number(img: &mut GrayImage, mut num: u32, x: u32, y: u32) {
+    if num == 0 {
+        draw_digit(img, 0, x, y);
+        return;
+    }
+
+    // Count digits
+    let mut digits = Vec::new();
+    while num > 0 {
+        digits.push((num % 10) as u8);
+        num /= 10;
+    }
+    digits.reverse();
+
+    // Draw each digit with 4-pixel spacing
+    for (i, &d) in digits.iter().enumerate() {
+        draw_digit(img, d, x + (i as u32) * 4, y);
+    }
+}
+
+/// Generate a PNG showing all glyphs with their IDs
+fn generate_glyph_map(registry: &CharacterRegistry) {
+    const CELL_WIDTH: u32 = 28;   // 22 glyph + 6 padding
+    const CELL_HEIGHT: u32 = 32;  // 22 glyph + 8 for ID + 2 padding
+    const COLS: u32 = 16;
+
+    let num_glyphs = registry.bitmaps.len() as u32;
+    let rows = (num_glyphs + COLS - 1) / COLS;
+
+    let img_width = COLS * CELL_WIDTH;
+    let img_height = rows * CELL_HEIGHT;
+
+    let mut img = GrayImage::new(img_width, img_height);
+
+    // Fill with dark gray background
+    for pixel in img.pixels_mut() {
+        *pixel = Luma([32]);
+    }
+
+    for (id, bitmap) in registry.bitmaps.iter().enumerate() {
+        let col = (id as u32) % COLS;
+        let row = (id as u32) / COLS;
+
+        let cell_x = col * CELL_WIDTH;
+        let cell_y = row * CELL_HEIGHT;
+
+        // Draw ID number at top of cell
+        draw_number(&mut img, id as u32, cell_x + 2, cell_y + 1);
+
+        // Draw glyph below the ID
+        let glyph_x = cell_x + 3;
+        let glyph_y = cell_y + 8;
+
+        for gy in 0..22 {
+            for gx in 0..22 {
+                let pixel_val = bitmap[(gy * 22 + gx) as usize];
+                if pixel_val == 1 {
+                    img.put_pixel(glyph_x + gx as u32, glyph_y + gy as u32, Luma([255]));
+                }
+            }
+        }
+    }
+
+    img.save("glyph_map.png").expect("Failed to save glyph_map.png");
+    eprintln!("Generated glyph_map.png");
 }
