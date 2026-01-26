@@ -1,6 +1,7 @@
 use image::Luma;
 use std::collections::HashMap;
-use std::env;
+use std::fs;
+use std::path::Path;
 
 /// A 22x22 bitmap represented as 484 bits (each element is 0 or 1)
 type Bitmap = Vec<u8>;
@@ -65,7 +66,7 @@ fn extract_character(img: &image::GrayImage, start_x: u32, start_y: u32) -> Bitm
 }
 
 /// Parse an image and return character IDs organized by line
-fn parse_image(path: &str) -> Result<Vec<Vec<u32>>, image::ImageError> {
+fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<Vec<u32>>, image::ImageError> {
     let img = image::open(path)?;
     let gray = img.to_luma8();
 
@@ -84,7 +85,6 @@ fn parse_image(path: &str) -> Result<Vec<Vec<u32>>, image::ImageError> {
     let chars_per_row = (width + H_GAP) / H_STRIDE;
     let num_rows = (height + V_GAP) / V_STRIDE;
 
-    let mut registry = CharacterRegistry::new();
     let mut lines: Vec<Vec<u32>> = Vec::new();
 
     for row in 0..num_rows {
@@ -101,32 +101,56 @@ fn parse_image(path: &str) -> Result<Vec<Vec<u32>>, image::ImageError> {
         lines.push(line_ids);
     }
 
-    // Print character registry summary
-    eprintln!("Found {} unique characters (including empty space as ID 0)", registry.next_id);
-
     Ok(lines)
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let dir = Path::new("text_images");
 
-    if args.len() < 2 {
-        eprintln!("Usage: {} <image.jpg>", args[0]);
+    if !dir.exists() {
+        eprintln!("Error: text_images directory not found");
         std::process::exit(1);
     }
 
-    let path = &args[1];
+    // Collect and sort image files
+    let mut image_files: Vec<_> = fs::read_dir(dir)
+        .expect("Failed to read text_images directory")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .map(|ext| ext.to_ascii_lowercase() == "jpg" || ext.to_ascii_lowercase() == "jpeg")
+                .unwrap_or(false)
+        })
+        .collect();
 
-    match parse_image(path) {
-        Ok(lines) => {
-            for line in lines {
-                let line_str: Vec<String> = line.iter().map(|id| id.to_string()).collect();
-                println!("{}", line_str.join(" "));
+    image_files.sort();
+
+    if image_files.is_empty() {
+        eprintln!("No JPG files found in text_images directory");
+        std::process::exit(1);
+    }
+
+    // Shared registry across all images
+    let mut registry = CharacterRegistry::new();
+
+    for path in &image_files {
+        let filename = path.file_name().unwrap().to_string_lossy();
+        println!("=== {} ===", filename);
+
+        match parse_image(path, &mut registry) {
+            Ok(lines) => {
+                for line in lines {
+                    let line_str: Vec<String> = line.iter().map(|id| id.to_string()).collect();
+                    println!("{}", line_str.join(" "));
+                }
+            }
+            Err(e) => {
+                eprintln!("Error processing {}: {}", filename, e);
             }
         }
-        Err(e) => {
-            eprintln!("Error processing image: {}", e);
-            std::process::exit(1);
-        }
+        println!();
     }
+
+    eprintln!("Found {} unique glyphs (including empty space as ID 0)", registry.next_id);
 }
