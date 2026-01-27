@@ -335,32 +335,48 @@ pub fn parse_image(
 }
 
 const MARGIN: usize = 4;
-const PIXELS_PER_CELL: usize = 5;
-const INNER_SIZE: usize = GLYPH_WIDTH as usize * PIXELS_PER_CELL; // 25
-/// Size of glyph texture with margin
-pub const GLYPH_TEXTURE_SIZE: usize = INNER_SIZE + 2 * MARGIN; // 33
+
+/// Calculate the texture size for a given glyph size (glyph_size + 2*MARGIN)
+pub fn texture_size(glyph_size: usize) -> usize {
+    glyph_size + 2 * MARGIN
+}
+
+/// The 5x5 glyph cells have widths in the pattern 4-4-6-4-4 for a size-22 glyph.
+/// This maps a pixel position to a cell index (0-4) for a given glyph size.
+fn pixel_to_cell(pos: usize, glyph_size: usize) -> usize {
+    // Cumulative boundaries scaled from the base pattern (0, 4, 8, 14, 18, 22)
+    // For glyph_size S: boundary[i] = base[i] * S / 22
+    const BASE: [usize; 6] = [0, 4, 8, 14, 18, 22];
+    for cell in 0..5 {
+        let boundary = BASE[cell + 1] * glyph_size / 22;
+        if pos < boundary {
+            return cell;
+        }
+    }
+    4 // Fallback to last cell
+}
 
 /// Convert a 5x5 bitmap to an RGBA image buffer for egui texture with black margin
-pub fn bitmap_to_rgba(bitmap: &Bitmap) -> Vec<u8> {
-    let mut rgba = Vec::with_capacity(GLYPH_TEXTURE_SIZE * GLYPH_TEXTURE_SIZE * 4);
+pub fn bitmap_to_rgba(bitmap: &Bitmap, glyph_size: usize) -> Vec<u8> {
+    let tex_size = texture_size(glyph_size);
+    let mut rgba = Vec::with_capacity(tex_size * tex_size * 4);
 
-    for y in 0..GLYPH_TEXTURE_SIZE {
-        for x in 0..GLYPH_TEXTURE_SIZE {
+    for y in 0..tex_size {
+        for x in 0..tex_size {
             // Check if we're in the margin area
             let in_margin = x < MARGIN
-                || x >= GLYPH_TEXTURE_SIZE - MARGIN
+                || x >= tex_size - MARGIN
                 || y < MARGIN
-                || y >= GLYPH_TEXTURE_SIZE - MARGIN;
+                || y >= tex_size - MARGIN;
 
             let val = if in_margin {
                 0 // Black margin
             } else {
-                // Map display coordinates to 5x5 bitmap cell
+                // Map display coordinates to 5x5 bitmap cell using 4-4-6-4-4 pattern
                 let bx = x - MARGIN;
                 let by = y - MARGIN;
-                // Scale from 22x22 display area to 5x5 bitmap
-                let cell_x = (bx * GLYPH_WIDTH as usize) / INNER_SIZE;
-                let cell_y = (by * GLYPH_HEIGHT as usize) / INNER_SIZE;
+                let cell_x = pixel_to_cell(bx, glyph_size);
+                let cell_y = pixel_to_cell(by, glyph_size);
                 let pixel = bitmap[cell_y * GLYPH_WIDTH as usize + cell_x];
                 if pixel == 1 {
                     255
