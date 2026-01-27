@@ -161,25 +161,56 @@ fn find_glyph_regions(uniform: &[bool]) -> Vec<(u32, u32)> {
     regions
 }
 
+/// Find threshold by locating the two histogram peaks (most common pixel values)
+/// and returning their midpoint. This works well for synthetic images with two
+/// distinct foreground/background colors.
+fn histogram_peaks_threshold(img: &image::GrayImage) -> (u8, u8, u8) {
+    // Build histogram
+    let mut histogram = [0u32; 256];
+    for pixel in img.pixels() {
+        let Luma([luma]) = *pixel;
+        histogram[luma as usize] += 1;
+    }
+
+    // Find the two highest peaks
+    let mut peak1_idx = 0usize;
+    let mut peak1_count = 0u32;
+    let mut peak2_idx = 0usize;
+    let mut peak2_count = 0u32;
+
+    for (i, &count) in histogram.iter().enumerate() {
+        if count > peak1_count {
+            peak2_idx = peak1_idx;
+            peak2_count = peak1_count;
+            peak1_idx = i;
+            peak1_count = count;
+        } else if count > peak2_count {
+            peak2_idx = i;
+            peak2_count = count;
+        }
+    }
+
+    // Ensure peak1 is the lower value
+    let (low_peak, high_peak) = if peak1_idx < peak2_idx {
+        (peak1_idx as u8, peak2_idx as u8)
+    } else {
+        (peak2_idx as u8, peak1_idx as u8)
+    };
+
+    let threshold = ((low_peak as u16 + high_peak as u16) / 2) as u8;
+    (low_peak, high_peak, threshold)
+}
+
 /// Detect the layout of glyphs in an image by finding uniform rows and columns
 fn detect_layout(img: &image::GrayImage) -> Option<ImageLayout> {
     let width = img.width();
     let height = img.height();
 
-    // Track min/max luminosity across all pixels
-    let mut min_luma: u8 = 255;
-    let mut max_luma: u8 = 0;
-    for y in 0..height {
-        for x in 0..width {
-            let Luma([luma]) = *img.get_pixel(x, y);
-            min_luma = min_luma.min(luma);
-            max_luma = max_luma.max(luma);
-        }
-    }
-    let luma_threshold = (min_luma + max_luma) / 2;
+    // Find threshold using histogram peaks method
+    let (low_peak, high_peak, luma_threshold) = histogram_peaks_threshold(img);
     eprintln!(
-        "  Luminosity range: {} - {}, threshold: {}",
-        min_luma, max_luma, luma_threshold
+        "  Histogram peaks: {}, {}, threshold: {}",
+        low_peak, high_peak, luma_threshold
     );
 
     // Find uniform rows and columns
