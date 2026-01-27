@@ -67,35 +67,41 @@ fn flip_bitmap(bitmap: &Bitmap) -> Bitmap {
     bitmap.iter().map(|&b| if b == 0 { 1 } else { 0 }).collect()
 }
 
-/// Check if a row is uniform (all pixels have the same color)
+/// Check if a row is uniform (i.e. if all pixels have the same color)
 fn is_uniform_row(img: &image::GrayImage, y: u32) -> bool {
     if img.width() == 0 {
         return true;
     }
-    let Luma([first]) = *img.get_pixel(0, y);
-    let first_class = first >= 128;
+    let Luma([first_pixel_luma]) = *img.get_pixel(0, y);
+    let first_pixel_is_white = first_pixel_luma >= 128;
     for x in 1..img.width() {
-        let Luma([luma]) = *img.get_pixel(x, y);
-        if (luma >= 128) != first_class {
+        let Luma([current_pixel_luma]) = *img.get_pixel(x, y);
+        let current_pixel_is_white = current_pixel_luma >= 128;
+        if current_pixel_is_white != first_pixel_is_white {
             return false;
         }
     }
+    // If we didn't find any pixels that were a different color, then we conclude that the row is
+    // uniform.
     true
 }
 
-/// Check if a column is uniform (all pixels have the same color)
+/// Check if a column is uniform (i.e. if all pixels have the same color)
 fn is_uniform_col(img: &image::GrayImage, x: u32) -> bool {
     if img.height() == 0 {
         return true;
     }
-    let Luma([first]) = *img.get_pixel(x, 0);
-    let first_class = first >= 128;
+    let Luma([first_pixel_luma]) = *img.get_pixel(x, 0);
+    let first_pixel_is_white = first_pixel_luma >= 128;
     for y in 1..img.height() {
-        let Luma([luma]) = *img.get_pixel(x, y);
-        if (luma >= 128) != first_class {
+        let Luma([current_pixel_luma]) = *img.get_pixel(x, y);
+        let current_pixel_is_white = current_pixel_luma >= 128;
+        if current_pixel_is_white != first_pixel_is_white {
             return false;
         }
     }
+    // If we didn't find any pixels that were a different color, then we conclude that the column
+    // is uniform.
     true
 }
 
@@ -103,6 +109,37 @@ fn is_uniform_col(img: &image::GrayImage, x: u32) -> bool {
 /// Returns a list of (start, length) for each glyph region
 fn find_glyph_regions(uniform: &[bool]) -> Vec<(u32, u32)> {
     let mut regions = Vec::new();
+
+    // let mut prev_was_uniform = true;
+    // let mut glyph_region_start: usize = 0;
+    // for i in 0..uniform.len() {
+    //     if uniform[i] {
+    //         if prev_was_uniform {
+    //             // do nothing
+    //         } else {
+    //             let glyph_region_end = i;
+    //             regions.push((
+    //                 glyph_region_start as u32,
+    //                 (glyph_region_end - glyph_region_start) as u32,
+    //             ));
+    //         }
+    //     } else {
+    //         if !prev_was_uniform {
+    //             // do nothing
+    //         } else {
+    //             glyph_region_start = i;
+    //         }
+    //     }
+    //     prev_was_uniform = uniform[i];
+    // }
+    // if !prev_was_uniform {
+    //     let glyph_region_end = uniform.len();
+    //     regions.push((
+    //         glyph_region_start as u32,
+    //         (glyph_region_end - glyph_region_start) as u32,
+    //     ));
+    // }
+
     let mut i = 0;
     while i < uniform.len() {
         // Skip uniform (gap) region
@@ -119,6 +156,7 @@ fn find_glyph_regions(uniform: &[bool]) -> Vec<(u32, u32)> {
         }
         regions.push((start as u32, (i - start) as u32));
     }
+
     regions
 }
 
@@ -219,7 +257,11 @@ fn extract_character(
             // Classify cell by mean luminosity (>= 128 -> white, < 128 -> black)
             let value = if pixel_count > 0 {
                 let avg_luma = total_luma / pixel_count;
-                if avg_luma >= 128 { 1 } else { 0 }
+                if avg_luma >= 128 {
+                    1
+                } else {
+                    0
+                }
             } else {
                 0
             };
@@ -231,7 +273,10 @@ fn extract_character(
 }
 
 /// Parse an image and return character IDs organized by line
-pub fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<Vec<u32>>, image::ImageError> {
+pub fn parse_image(
+    path: &Path,
+    registry: &mut CharacterRegistry,
+) -> Result<Vec<Vec<u32>>, image::ImageError> {
     let img = image::open(path)?;
     let gray = img.to_luma8();
 
@@ -252,13 +297,7 @@ pub fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<
 
         for col in 0..layout.chars_per_row {
             let x = layout.x_offset + col * h_stride;
-            let bitmap = extract_character(
-                &gray,
-                x,
-                y,
-                layout.char_width,
-                layout.char_height,
-            );
+            let bitmap = extract_character(&gray, x, y, layout.char_width, layout.char_height);
             line_bitmaps.push(bitmap);
         }
         bitmaps.push(line_bitmaps);
@@ -266,7 +305,8 @@ pub fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<
 
     // If the registry already has characters, check if this image is inverted
     if registry.next_id > 1 {
-        let matches = bitmaps.iter()
+        let matches = bitmaps
+            .iter()
             .flatten()
             .filter(|b| registry.contains(b))
             .count();
@@ -307,8 +347,10 @@ pub fn bitmap_to_rgba(bitmap: &Bitmap) -> Vec<u8> {
     for y in 0..GLYPH_TEXTURE_SIZE {
         for x in 0..GLYPH_TEXTURE_SIZE {
             // Check if we're in the margin area
-            let in_margin = x < MARGIN || x >= GLYPH_TEXTURE_SIZE - MARGIN
-                         || y < MARGIN || y >= GLYPH_TEXTURE_SIZE - MARGIN;
+            let in_margin = x < MARGIN
+                || x >= GLYPH_TEXTURE_SIZE - MARGIN
+                || y < MARGIN
+                || y >= GLYPH_TEXTURE_SIZE - MARGIN;
 
             let val = if in_margin {
                 0 // Black margin
@@ -320,7 +362,11 @@ pub fn bitmap_to_rgba(bitmap: &Bitmap) -> Vec<u8> {
                 let cell_x = (bx * GLYPH_WIDTH as usize) / INNER_SIZE;
                 let cell_y = (by * GLYPH_HEIGHT as usize) / INNER_SIZE;
                 let pixel = bitmap[cell_y * GLYPH_WIDTH as usize + cell_x];
-                if pixel == 1 { 255 } else { 0 }
+                if pixel == 1 {
+                    255
+                } else {
+                    0
+                }
             };
 
             rgba.push(val); // R
