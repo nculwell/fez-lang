@@ -2,19 +2,84 @@ use image::{DynamicImage, GrayImage, Luma};
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Convert an image to grayscale using max(R,G,B) for each pixel
-fn to_max_channel_gray(img: &DynamicImage) -> GrayImage {
+/// Result of grayscale conversion, indicating which method was used
+enum GrayMethod {
+    DominantChannel,
+    Luminosity,
+}
+
+/// Convert an image to grayscale using a hybrid approach.
+/// If one color channel dominates (more than 2x the others) for at least 25% of pixels,
+/// use that channel. Otherwise, use standard luminosity.
+fn to_gray_hybrid(img: &DynamicImage) -> (GrayImage, GrayMethod) {
     let rgb = img.to_rgb8();
     let (width, height) = rgb.dimensions();
-    let mut gray = GrayImage::new(width, height);
-    for y in 0..height {
-        for x in 0..width {
-            let pixel = rgb.get_pixel(x, y);
-            let max_channel = pixel[0].max(pixel[1]).max(pixel[2]);
-            gray.put_pixel(x, y, Luma([max_channel]));
+    let total_pixels = (width * height) as usize;
+
+    // Count pixels where one channel is more than double the others
+    let mut dominant_counts = [0usize; 3]; // R, G, B
+    for pixel in rgb.pixels() {
+        let r = pixel[0] as u16;
+        let g = pixel[1] as u16;
+        let b = pixel[2] as u16;
+
+        // Check if R dominates (R > 2*G and R > 2*B)
+        if r > 2 * g && r > 2 * b {
+            dominant_counts[0] += 1;
+        }
+        // Check if G dominates
+        else if g > 2 * r && g > 2 * b {
+            dominant_counts[1] += 1;
+        }
+        // Check if B dominates
+        else if b > 2 * r && b > 2 * g {
+            dominant_counts[2] += 1;
         }
     }
-    gray
+
+    let threshold_count = total_pixels / 4; // 25%
+    let dominant_channel = if dominant_counts[0] >= threshold_count {
+        Some(0)
+    } else if dominant_counts[1] >= threshold_count {
+        Some(1)
+    } else if dominant_counts[2] >= threshold_count {
+        Some(2)
+    } else {
+        None
+    };
+
+    let mut gray = GrayImage::new(width, height);
+
+    if let Some(channel) = dominant_channel {
+        let channel_name = ["red", "green", "blue"][channel];
+        let pct = dominant_counts[channel] * 100 / total_pixels;
+        eprintln!(
+            "  Color imbalance detected: {} dominant in {}% of pixels, using {} channel",
+            channel_name, pct, channel_name
+        );
+
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = rgb.get_pixel(x, y);
+                gray.put_pixel(x, y, Luma([pixel[channel]]));
+            }
+        }
+        (gray, GrayMethod::DominantChannel)
+    } else {
+        eprintln!("  No color imbalance, using luminosity");
+
+        for y in 0..height {
+            for x in 0..width {
+                let pixel = rgb.get_pixel(x, y);
+                // Standard luminosity: 0.299*R + 0.587*G + 0.114*B
+                let luma = (0.299 * pixel[0] as f32
+                    + 0.587 * pixel[1] as f32
+                    + 0.114 * pixel[2] as f32) as u8;
+                gray.put_pixel(x, y, Luma([luma]));
+            }
+        }
+        (gray, GrayMethod::Luminosity)
+    }
 }
 
 /// Detected layout parameters for an image
@@ -176,10 +241,60 @@ fn find_glyph_regions(uniform: &[bool]) -> Vec<(u32, u32)> {
     regions
 }
 
-/// Find threshold by locating the two histogram peaks (most common pixel values)
-/// and returning their midpoint. This works well for synthetic images with two
-/// distinct foreground/background colors.
-fn histogram_peaks_threshold(img: &image::GrayImage) -> (u8, u8, u8) {
+/// Compute the optimal threshold using Otsu's method.
+/// Finds the threshold that maximizes between-class variance.
+fn otsu_threshold(img: &image::GrayImage) -> u8 {
+    let total_pixels = (img.width() * img.height()) as f64;
+    if total_pixels == 0.0 {
+        return 128;
+    }
+
+    // Build histogram
+    let mut histogram = [0u32; 256];
+    for pixel in img.pixels() {
+        let Luma([luma]) = *pixel;
+        histogram[luma as usize] += 1;
+    }
+
+    // Precompute total sum of all pixel values
+    let total_sum: f64 = histogram
+        .iter()
+        .enumerate()
+        .map(|(i, &count)| i as f64 * count as f64)
+        .sum();
+
+    let mut best_threshold = 0u8;
+    let mut best_variance = 0.0f64;
+    let mut sum_bg = 0.0f64;
+    let mut weight_bg = 0.0f64;
+
+    for (t, &count) in histogram.iter().enumerate() {
+        weight_bg += count as f64;
+        if weight_bg == 0.0 {
+            continue;
+        }
+
+        let weight_fg = total_pixels - weight_bg;
+        if weight_fg == 0.0 {
+            break;
+        }
+
+        sum_bg += t as f64 * count as f64;
+        let mean_bg = sum_bg / weight_bg;
+        let mean_fg = (total_sum - sum_bg) / weight_fg;
+
+        let variance = weight_bg * weight_fg * (mean_bg - mean_fg) * (mean_bg - mean_fg);
+        if variance > best_variance {
+            best_variance = variance;
+            best_threshold = t as u8;
+        }
+    }
+
+    best_threshold
+}
+
+/// Find threshold as midpoint between the two histogram peaks.
+fn histogram_peaks_threshold(img: &image::GrayImage) -> u8 {
     // Build histogram
     let mut histogram = [0u32; 256];
     for pixel in img.pixels() {
@@ -205,28 +320,27 @@ fn histogram_peaks_threshold(img: &image::GrayImage) -> (u8, u8, u8) {
         }
     }
 
-    // Ensure peak1 is the lower value
-    let (low_peak, high_peak) = if peak1_idx < peak2_idx {
-        (peak1_idx as u8, peak2_idx as u8)
-    } else {
-        (peak2_idx as u8, peak1_idx as u8)
-    };
-
-    let threshold = ((low_peak as u16 + high_peak as u16) / 2) as u8;
-    (low_peak, high_peak, threshold)
+    ((peak1_idx as u16 + peak2_idx as u16) / 2) as u8
 }
 
 /// Detect the layout of glyphs in an image by finding uniform rows and columns
-fn detect_layout(img: &image::GrayImage) -> Option<ImageLayout> {
+fn detect_layout(img: &image::GrayImage, method: &GrayMethod) -> Option<ImageLayout> {
     let width = img.width();
     let height = img.height();
 
-    // Find threshold using histogram peaks method
-    let (low_peak, high_peak, luma_threshold) = histogram_peaks_threshold(img);
-    eprintln!(
-        "  Histogram peaks: {}, {}, threshold: {}",
-        low_peak, high_peak, luma_threshold
-    );
+    // Choose threshold method based on how the image was converted to grayscale
+    let luma_threshold = match method {
+        GrayMethod::DominantChannel => {
+            let t = otsu_threshold(img);
+            eprintln!("  Threshold (Otsu): {}", t);
+            t
+        }
+        GrayMethod::Luminosity => {
+            let t = histogram_peaks_threshold(img);
+            eprintln!("  Threshold (histogram peaks): {}", t);
+            t
+        }
+    };
 
     // Find uniform rows and columns
     let uniform_rows: Vec<bool> = (0..height)
@@ -364,11 +478,11 @@ pub fn parse_image(
 ) -> Result<Vec<Vec<u32>>, image::ImageError> {
     eprintln!("Loading image: {}", path.display());
     let img = image::open(path)?;
-    let gray = to_max_channel_gray(&img);
+    let (gray, method) = to_gray_hybrid(&img);
     eprintln!("  Image size: {}x{}", gray.width(), gray.height());
 
     // Detect layout by finding uniform rows/columns that separate glyphs
-    let layout = match detect_layout(&gray) {
+    let layout = match detect_layout(&gray, &method) {
         Some(l) => l,
         None => {
             eprintln!("  No glyphs detected in image");
