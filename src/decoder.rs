@@ -165,6 +165,18 @@ fn detect_layout(img: &image::GrayImage) -> Option<ImageLayout> {
     let width = img.width();
     let height = img.height();
 
+    // Track min/max luminosity across all pixels
+    let mut min_luma: u8 = 255;
+    let mut max_luma: u8 = 0;
+    for y in 0..height {
+        for x in 0..width {
+            let Luma([luma]) = *img.get_pixel(x, y);
+            min_luma = min_luma.min(luma);
+            max_luma = max_luma.max(luma);
+        }
+    }
+    eprintln!("  Luminosity range: {} - {}", min_luma, max_luma);
+
     // Find uniform rows and columns
     let uniform_rows: Vec<bool> = (0..height).map(|y| is_uniform_row(img, y)).collect();
     let uniform_cols: Vec<bool> = (0..width).map(|x| is_uniform_col(img, x)).collect();
@@ -277,14 +289,31 @@ pub fn parse_image(
     path: &Path,
     registry: &mut CharacterRegistry,
 ) -> Result<Vec<Vec<u32>>, image::ImageError> {
+    eprintln!("Loading image: {}", path.display());
     let img = image::open(path)?;
     let gray = img.to_luma8();
+    eprintln!("  Image size: {}x{}", gray.width(), gray.height());
 
     // Detect layout by finding uniform rows/columns that separate glyphs
     let layout = match detect_layout(&gray) {
         Some(l) => l,
-        None => return Ok(Vec::new()), // No glyphs found
+        None => {
+            eprintln!("  No glyphs detected in image");
+            return Ok(Vec::new());
+        }
     };
+
+    eprintln!(
+        "  Layout: {}x{} glyphs, char size {}x{}, gap {}x{}, offset ({}, {})",
+        layout.chars_per_row,
+        layout.num_rows,
+        layout.char_width,
+        layout.char_height,
+        layout.h_gap,
+        layout.v_gap,
+        layout.x_offset,
+        layout.y_offset
+    );
 
     let h_stride = layout.char_width + layout.h_gap;
     let v_stride = layout.char_height + layout.v_gap;
@@ -303,6 +332,8 @@ pub fn parse_image(
         bitmaps.push(line_bitmaps);
     }
 
+    let total_glyphs: usize = bitmaps.iter().map(|line| line.len()).sum();
+
     // If the registry already has characters, check if this image is inverted
     if registry.next_id > 1 {
         let matches = bitmaps
@@ -311,7 +342,13 @@ pub fn parse_image(
             .filter(|b| registry.contains(b))
             .count();
 
+        eprintln!(
+            "  Matches with existing glyphs: {}/{}",
+            matches, total_glyphs
+        );
+
         if matches == 0 {
+            eprintln!("  Flipping all bitmaps (image appears inverted)");
             // No matches found - flip all bitmaps
             for line in &mut bitmaps {
                 for bitmap in line {
@@ -322,6 +359,7 @@ pub fn parse_image(
     }
 
     // Second pass: assign IDs to all bitmaps
+    let glyphs_before = registry.next_id;
     let mut lines: Vec<Vec<u32>> = Vec::new();
     for line_bitmaps in bitmaps {
         let line_ids: Vec<u32> = line_bitmaps
@@ -330,6 +368,11 @@ pub fn parse_image(
             .collect();
         lines.push(line_ids);
     }
+    let new_glyphs = registry.next_id - glyphs_before;
+    eprintln!(
+        "  Extracted {} glyphs ({} new, {} total in registry)",
+        total_glyphs, new_glyphs, registry.next_id
+    );
 
     Ok(lines)
 }
