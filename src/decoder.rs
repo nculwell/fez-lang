@@ -13,6 +13,7 @@ struct ImageLayout {
     y_offset: u32,
     chars_per_row: u32,
     num_rows: u32,
+    luma_threshold: u8,
 }
 
 /// Conceptual glyph grid dimensions (5x5)
@@ -68,15 +69,15 @@ fn flip_bitmap(bitmap: &Bitmap) -> Bitmap {
 }
 
 /// Check if a row is uniform (i.e. if all pixels have the same color)
-fn is_uniform_row(img: &image::GrayImage, y: u32) -> bool {
+fn is_uniform_row(img: &image::GrayImage, y: u32, luma_threshold: u8) -> bool {
     if img.width() == 0 {
         return true;
     }
     let Luma([first_pixel_luma]) = *img.get_pixel(0, y);
-    let first_pixel_is_white = first_pixel_luma >= 128;
+    let first_pixel_is_white = first_pixel_luma >= luma_threshold;
     for x in 1..img.width() {
         let Luma([current_pixel_luma]) = *img.get_pixel(x, y);
-        let current_pixel_is_white = current_pixel_luma >= 128;
+        let current_pixel_is_white = current_pixel_luma >= luma_threshold;
         if current_pixel_is_white != first_pixel_is_white {
             return false;
         }
@@ -87,15 +88,15 @@ fn is_uniform_row(img: &image::GrayImage, y: u32) -> bool {
 }
 
 /// Check if a column is uniform (i.e. if all pixels have the same color)
-fn is_uniform_col(img: &image::GrayImage, x: u32) -> bool {
+fn is_uniform_col(img: &image::GrayImage, x: u32, luma_threshold: u8) -> bool {
     if img.height() == 0 {
         return true;
     }
     let Luma([first_pixel_luma]) = *img.get_pixel(x, 0);
-    let first_pixel_is_white = first_pixel_luma >= 128;
+    let first_pixel_is_white = first_pixel_luma >= luma_threshold;
     for y in 1..img.height() {
         let Luma([current_pixel_luma]) = *img.get_pixel(x, y);
-        let current_pixel_is_white = current_pixel_luma >= 128;
+        let current_pixel_is_white = current_pixel_luma >= luma_threshold;
         if current_pixel_is_white != first_pixel_is_white {
             return false;
         }
@@ -175,11 +176,19 @@ fn detect_layout(img: &image::GrayImage) -> Option<ImageLayout> {
             max_luma = max_luma.max(luma);
         }
     }
-    eprintln!("  Luminosity range: {} - {}", min_luma, max_luma);
+    let luma_threshold = (min_luma + max_luma) / 2;
+    eprintln!(
+        "  Luminosity range: {} - {}, threshold: {}",
+        min_luma, max_luma, luma_threshold
+    );
 
     // Find uniform rows and columns
-    let uniform_rows: Vec<bool> = (0..height).map(|y| is_uniform_row(img, y)).collect();
-    let uniform_cols: Vec<bool> = (0..width).map(|x| is_uniform_col(img, x)).collect();
+    let uniform_rows: Vec<bool> = (0..height)
+        .map(|y| is_uniform_row(img, y, luma_threshold))
+        .collect();
+    let uniform_cols: Vec<bool> = (0..width)
+        .map(|x| is_uniform_col(img, x, luma_threshold))
+        .collect();
 
     // Find glyph regions
     let row_regions = find_glyph_regions(&uniform_rows);
@@ -216,6 +225,7 @@ fn detect_layout(img: &image::GrayImage) -> Option<ImageLayout> {
         y_offset,
         chars_per_row: col_regions.len() as u32,
         num_rows: row_regions.len() as u32,
+        luma_threshold,
     })
 }
 
@@ -226,6 +236,7 @@ fn extract_character(
     start_y: u32,
     char_width: u32,
     char_height: u32,
+    luma_threshold: u8,
 ) -> Bitmap {
     let mut bitmap = Vec::with_capacity((GLYPH_WIDTH * GLYPH_HEIGHT) as usize);
 
@@ -266,10 +277,10 @@ fn extract_character(
                 }
             }
 
-            // Classify cell by mean luminosity (>= 128 -> white, < 128 -> black)
+            // Classify cell by mean luminosity
             let value = if pixel_count > 0 {
-                let avg_luma = total_luma / pixel_count;
-                if avg_luma >= 128 {
+                let mean_luma = (total_luma / pixel_count) as u8;
+                if mean_luma >= luma_threshold {
                     1
                 } else {
                     0
@@ -326,7 +337,14 @@ pub fn parse_image(
 
         for col in 0..layout.chars_per_row {
             let x = layout.x_offset + col * h_stride;
-            let bitmap = extract_character(&gray, x, y, layout.char_width, layout.char_height);
+            let bitmap = extract_character(
+                &gray,
+                x,
+                y,
+                layout.char_width,
+                layout.char_height,
+                layout.luma_threshold,
+            );
             line_bitmaps.push(bitmap);
         }
         bitmaps.push(line_bitmaps);
@@ -407,10 +425,8 @@ pub fn bitmap_to_rgba(bitmap: &Bitmap, glyph_size: usize) -> Vec<u8> {
     for y in 0..tex_size {
         for x in 0..tex_size {
             // Check if we're in the margin area
-            let in_margin = x < MARGIN
-                || x >= tex_size - MARGIN
-                || y < MARGIN
-                || y >= tex_size - MARGIN;
+            let in_margin =
+                x < MARGIN || x >= tex_size - MARGIN || y < MARGIN || y >= tex_size - MARGIN;
 
             let val = if in_margin {
                 0 // Black margin
