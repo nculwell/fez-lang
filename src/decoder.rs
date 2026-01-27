@@ -50,6 +50,16 @@ impl CharacterRegistry {
         self.bitmaps.push(bitmap);
         id
     }
+
+    /// Check if a bitmap exists in the registry
+    pub fn contains(&self, bitmap: &Bitmap) -> bool {
+        self.lookup.contains_key(bitmap)
+    }
+}
+
+/// Flip all bits in a bitmap (0 -> 1, 1 -> 0)
+fn flip_bitmap(bitmap: &Bitmap) -> Bitmap {
+    bitmap.iter().map(|&b| if b == 0 { 1 } else { 0 }).collect()
 }
 
 /// Extract a character region as a 5x5 bitmap by averaging pixel luminosity
@@ -119,19 +129,44 @@ pub fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<
     let chars_per_row = (width + H_GAP) / H_STRIDE;
     let num_rows = (height + V_GAP) / V_STRIDE;
 
-    let mut lines: Vec<Vec<u32>> = Vec::new();
-
+    // First pass: extract all bitmaps from the image
+    let mut bitmaps: Vec<Vec<Bitmap>> = Vec::new();
     for row in 0..num_rows {
-        let mut line_ids: Vec<u32> = Vec::new();
+        let mut line_bitmaps: Vec<Bitmap> = Vec::new();
         let y = row * V_STRIDE;
 
         for col in 0..chars_per_row {
             let x = col * H_STRIDE;
             let bitmap = extract_character(&gray, x, y);
-            let id = registry.get_or_assign_id(bitmap);
-            line_ids.push(id);
+            line_bitmaps.push(bitmap);
         }
+        bitmaps.push(line_bitmaps);
+    }
 
+    // If the registry already has characters, check if this image is inverted
+    if registry.next_id > 1 {
+        let matches = bitmaps.iter()
+            .flatten()
+            .filter(|b| registry.contains(b))
+            .count();
+
+        if matches == 0 {
+            // No matches found - flip all bitmaps
+            for line in &mut bitmaps {
+                for bitmap in line {
+                    *bitmap = flip_bitmap(bitmap);
+                }
+            }
+        }
+    }
+
+    // Second pass: assign IDs to all bitmaps
+    let mut lines: Vec<Vec<u32>> = Vec::new();
+    for line_bitmaps in bitmaps {
+        let line_ids: Vec<u32> = line_bitmaps
+            .into_iter()
+            .map(|bitmap| registry.get_or_assign_id(bitmap))
+            .collect();
         lines.push(line_ids);
     }
 
