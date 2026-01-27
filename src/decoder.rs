@@ -2,13 +2,18 @@ use image::Luma;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Character dimensions and gaps
-pub const CHAR_WIDTH: u32 = 22;
-pub const CHAR_HEIGHT: u32 = 22;
-pub const H_GAP: u32 = 4;
-pub const V_GAP: u32 = 6;
-pub const H_STRIDE: u32 = CHAR_WIDTH + H_GAP;  // 26
-pub const V_STRIDE: u32 = CHAR_HEIGHT + V_GAP; // 29
+/// Detected layout parameters for an image
+#[derive(Debug, Clone)]
+struct ImageLayout {
+    char_width: u32,
+    char_height: u32,
+    h_gap: u32,
+    v_gap: u32,
+    x_offset: u32,
+    y_offset: u32,
+    chars_per_row: u32,
+    num_rows: u32,
+}
 
 /// Conceptual glyph grid dimensions (5x5)
 pub const GLYPH_WIDTH: u32 = 5;
@@ -62,18 +67,126 @@ fn flip_bitmap(bitmap: &Bitmap) -> Bitmap {
     bitmap.iter().map(|&b| if b == 0 { 1 } else { 0 }).collect()
 }
 
+/// Check if a row is uniform (all pixels have the same color)
+fn is_uniform_row(img: &image::GrayImage, y: u32) -> bool {
+    if img.width() == 0 {
+        return true;
+    }
+    let Luma([first]) = *img.get_pixel(0, y);
+    let first_class = first >= 128;
+    for x in 1..img.width() {
+        let Luma([luma]) = *img.get_pixel(x, y);
+        if (luma >= 128) != first_class {
+            return false;
+        }
+    }
+    true
+}
+
+/// Check if a column is uniform (all pixels have the same color)
+fn is_uniform_col(img: &image::GrayImage, x: u32) -> bool {
+    if img.height() == 0 {
+        return true;
+    }
+    let Luma([first]) = *img.get_pixel(x, 0);
+    let first_class = first >= 128;
+    for y in 1..img.height() {
+        let Luma([luma]) = *img.get_pixel(x, y);
+        if (luma >= 128) != first_class {
+            return false;
+        }
+    }
+    true
+}
+
+/// Find runs of non-uniform rows/columns (glyph regions) separated by uniform ones (gaps)
+/// Returns a list of (start, length) for each glyph region
+fn find_glyph_regions(uniform: &[bool]) -> Vec<(u32, u32)> {
+    let mut regions = Vec::new();
+    let mut i = 0;
+    while i < uniform.len() {
+        // Skip uniform (gap) region
+        while i < uniform.len() && uniform[i] {
+            i += 1;
+        }
+        if i >= uniform.len() {
+            break;
+        }
+        // Found start of a glyph region
+        let start = i;
+        while i < uniform.len() && !uniform[i] {
+            i += 1;
+        }
+        regions.push((start as u32, (i - start) as u32));
+    }
+    regions
+}
+
+/// Detect the layout of glyphs in an image by finding uniform rows and columns
+fn detect_layout(img: &image::GrayImage) -> Option<ImageLayout> {
+    let width = img.width();
+    let height = img.height();
+
+    // Find uniform rows and columns
+    let uniform_rows: Vec<bool> = (0..height).map(|y| is_uniform_row(img, y)).collect();
+    let uniform_cols: Vec<bool> = (0..width).map(|x| is_uniform_col(img, x)).collect();
+
+    // Find glyph regions
+    let row_regions = find_glyph_regions(&uniform_rows);
+    let col_regions = find_glyph_regions(&uniform_cols);
+
+    if row_regions.is_empty() || col_regions.is_empty() {
+        return None;
+    }
+
+    // Extract layout parameters from the first glyph
+    let x_offset = col_regions[0].0;
+    let y_offset = row_regions[0].0;
+    let char_width = col_regions[0].1;
+    let char_height = row_regions[0].1;
+
+    // Calculate gaps from spacing between glyphs (if there are multiple)
+    let h_gap = if col_regions.len() > 1 {
+        col_regions[1].0 - col_regions[0].0 - char_width
+    } else {
+        0
+    };
+    let v_gap = if row_regions.len() > 1 {
+        row_regions[1].0 - row_regions[0].0 - char_height
+    } else {
+        0
+    };
+
+    Some(ImageLayout {
+        char_width,
+        char_height,
+        h_gap,
+        v_gap,
+        x_offset,
+        y_offset,
+        chars_per_row: col_regions.len() as u32,
+        num_rows: row_regions.len() as u32,
+    })
+}
+
 /// Extract a character region as a 5x5 bitmap by averaging pixel luminosity
-pub fn extract_character(img: &image::GrayImage, start_x: u32, start_y: u32) -> Bitmap {
+fn extract_character(
+    img: &image::GrayImage,
+    start_x: u32,
+    start_y: u32,
+    char_width: u32,
+    char_height: u32,
+) -> Bitmap {
     let mut bitmap = Vec::with_capacity((GLYPH_WIDTH * GLYPH_HEIGHT) as usize);
 
     // The glyph is conceptually divided into a 5x5 grid of pixels that are black or white. We are
     // calling these conceptual "pixels" cells here, to distinguish them from the actual pixels of
     // the glyph representation. Since the glyph dimensions might not be divisible by 5, we use
     // floating point sizes for the cell dimensions.
-    let cell_width = CHAR_WIDTH as f64 / GLYPH_WIDTH as f64;
-    let cell_height = CHAR_HEIGHT as f64 / GLYPH_HEIGHT as f64;
+    let cell_width = char_width as f64 / GLYPH_WIDTH as f64;
+    let cell_height = char_height as f64 / GLYPH_HEIGHT as f64;
 
-    // Divide the 22x22 pixel region into a 5x5 grid of cells
+    // Divide the pixel region into a 5x5 grid of cells
     for cell_y in 0..GLYPH_HEIGHT {
         for cell_x in 0..GLYPH_WIDTH {
             // Calculate pixel boundaries for this cell. Cell sizes will not be integers when the
@@ -122,22 +235,30 @@ pub fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<
     let img = image::open(path)?;
     let gray = img.to_luma8();
 
-    let width = gray.width();
-    let height = gray.height();
+    // Detect layout by finding uniform rows/columns that separate glyphs
+    let layout = match detect_layout(&gray) {
+        Some(l) => l,
+        None => return Ok(Vec::new()), // No glyphs found
+    };
 
-    // Calculate number of characters per row and number of rows
-    let chars_per_row = (width + H_GAP) / H_STRIDE;
-    let num_rows = (height + V_GAP) / V_STRIDE;
+    let h_stride = layout.char_width + layout.h_gap;
+    let v_stride = layout.char_height + layout.v_gap;
 
     // First pass: extract all bitmaps from the image
     let mut bitmaps: Vec<Vec<Bitmap>> = Vec::new();
-    for row in 0..num_rows {
+    for row in 0..layout.num_rows {
         let mut line_bitmaps: Vec<Bitmap> = Vec::new();
-        let y = row * V_STRIDE;
+        let y = layout.y_offset + row * v_stride;
 
-        for col in 0..chars_per_row {
-            let x = col * H_STRIDE;
-            let bitmap = extract_character(&gray, x, y);
+        for col in 0..layout.chars_per_row {
+            let x = layout.x_offset + col * h_stride;
+            let bitmap = extract_character(
+                &gray,
+                x,
+                y,
+                layout.char_width,
+                layout.char_height,
+            );
             line_bitmaps.push(bitmap);
         }
         bitmaps.push(line_bitmaps);
