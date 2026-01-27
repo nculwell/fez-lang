@@ -138,10 +138,11 @@ pub fn parse_image(path: &Path, registry: &mut CharacterRegistry) -> Result<Vec<
     Ok(lines)
 }
 
-/// Size of glyph texture with margin (22 + 4*2 = 30)
-pub const GLYPH_TEXTURE_SIZE: usize = 30;
 const MARGIN: usize = 4;
-const INNER_SIZE: usize = GLYPH_TEXTURE_SIZE - 2 * MARGIN; // 22
+const PIXELS_PER_CELL: usize = 5;
+const INNER_SIZE: usize = GLYPH_WIDTH as usize * PIXELS_PER_CELL; // 25
+/// Size of glyph texture with margin
+pub const GLYPH_TEXTURE_SIZE: usize = INNER_SIZE + 2 * MARGIN; // 33
 
 /// Convert a 5x5 bitmap to an RGBA image buffer for egui texture with black margin
 pub fn bitmap_to_rgba(bitmap: &Bitmap) -> Vec<u8> {
