@@ -229,6 +229,22 @@ fn detect_layout(img: &image::GrayImage) -> Option<ImageLayout> {
     })
 }
 
+/// Print a grid of luminosity values for debugging (upper-left 64x64 block)
+fn print_luma_grid(img: &image::GrayImage) {
+    let max_size = 64;
+    let width = img.width().min(max_size);
+    let height = img.height().min(max_size);
+    eprintln!("  Luma grid ({}x{}):", width, height);
+    for y in 0..height {
+        eprint!("    ");
+        for x in 0..width {
+            let Luma([luma]) = *img.get_pixel(x, y);
+            eprint!("{:02x} ", luma);
+        }
+        eprintln!();
+    }
+}
+
 /// Extract a character region as a 5x5 bitmap by averaging pixel luminosity
 fn extract_character(
     img: &image::GrayImage,
@@ -351,6 +367,11 @@ pub fn parse_image(
     }
 
     let total_glyphs: usize = bitmaps.iter().map(|line| line.len()).sum();
+
+    // Print luma grid for debugging if very few glyphs were found
+    if total_glyphs < 5 {
+        print_luma_grid(&gray);
+    }
 
     // If the registry already has characters, check if this image is inverted
     if registry.next_id > 1 {
