@@ -1,6 +1,21 @@
-use image::Luma;
+use image::{DynamicImage, GrayImage, Luma};
 use std::collections::HashMap;
 use std::path::Path;
+
+/// Convert an image to grayscale using max(R,G,B) for each pixel
+fn to_max_channel_gray(img: &DynamicImage) -> GrayImage {
+    let rgb = img.to_rgb8();
+    let (width, height) = rgb.dimensions();
+    let mut gray = GrayImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = rgb.get_pixel(x, y);
+            let max_channel = pixel[0].max(pixel[1]).max(pixel[2]);
+            gray.put_pixel(x, y, Luma([max_channel]));
+        }
+    }
+    gray
+}
 
 /// Detected layout parameters for an image
 #[derive(Debug, Clone)]
@@ -349,7 +364,7 @@ pub fn parse_image(
 ) -> Result<Vec<Vec<u32>>, image::ImageError> {
     eprintln!("Loading image: {}", path.display());
     let img = image::open(path)?;
-    let gray = img.to_luma8();
+    let gray = to_max_channel_gray(&img);
     eprintln!("  Image size: {}x{}", gray.width(), gray.height());
 
     // Detect layout by finding uniform rows/columns that separate glyphs
