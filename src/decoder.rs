@@ -56,19 +56,27 @@ impl CharacterRegistry {
 pub fn extract_character(img: &image::GrayImage, start_x: u32, start_y: u32) -> Bitmap {
     let mut bitmap = Vec::with_capacity((GLYPH_WIDTH * GLYPH_HEIGHT) as usize);
 
+    // The glyph is conceptually divided into a 5x5 grid of pixels that are black or white. We are
+    // calling these conceptual "pixels" cells here, to distinguish them from the actual pixels of
+    // the glyph representation. Since the glyph dimensions might not be divisible by 5, we use
+    // floating point sizes for the cell dimensions.
     let cell_width = CHAR_WIDTH as f64 / GLYPH_WIDTH as f64;
     let cell_height = CHAR_HEIGHT as f64 / GLYPH_HEIGHT as f64;
 
     // Divide the 22x22 pixel region into a 5x5 grid of cells
     for cell_y in 0..GLYPH_HEIGHT {
         for cell_x in 0..GLYPH_WIDTH {
-            // Calculate pixel boundaries for this cell using floating point division
+            // Calculate pixel boundaries for this cell. Cell sizes will not be integers when the
+            // glyph width/height are not divisible by 5. We try to be conservative in
+            // approximating the cell boundaries, so we use ceil and floor to leave out boundary
+            // pixels that may or may not belong to the cell we're scanning. This should be fine,
+            // we don't need the entire cell to classify its color.
             let px_start = (cell_x as f64 * cell_width).ceil() as u32;
             let px_end = ((cell_x + 1) as f64 * cell_width).floor() as u32;
             let py_start = (cell_y as f64 * cell_height).ceil() as u32;
             let py_end = ((cell_y + 1) as f64 * cell_height).floor() as u32;
 
-            // Calculate average luminosity for this cell
+            // Calculate mean luminosity for this cell
             let mut total_luma: u32 = 0;
             let mut pixel_count: u32 = 0;
 
@@ -85,7 +93,7 @@ pub fn extract_character(img: &image::GrayImage, start_x: u32, start_y: u32) -> 
                 }
             }
 
-            // Classify cell by average luminosity (>= 128 -> white, < 128 -> black)
+            // Classify cell by mean luminosity (>= 128 -> white, < 128 -> black)
             let value = if pixel_count > 0 {
                 let avg_luma = total_luma / pixel_count;
                 if avg_luma >= 128 { 1 } else { 0 }
