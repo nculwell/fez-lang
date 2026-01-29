@@ -528,10 +528,10 @@ pub fn parse_image(
 
     let total_glyphs: usize = bitmaps.iter().map(|line| line.len()).sum();
 
-    // Print luma grid for debugging if very few glyphs were found
-    if total_glyphs < 5 {
-        print_luma_grid(&gray);
-    }
+    // // Print luma grid for debugging if very few glyphs were found
+    // if total_glyphs < 5 {
+    //     print_luma_grid(&gray);
+    // }
 
     // If the registry already has characters, check if this image is inverted
     if registry.next_id > 1 {

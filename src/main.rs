@@ -241,13 +241,33 @@ impl eframe::App for GlyphMapperApp {
                         self.selected_glyph = Some(id);
                     }
 
-                    // Summary: all decoded text on one line
+                    // Summary: decode vertically (top-to-bottom, left-to-right)
                     ui.add_space(8.0);
-                    let full_decoded: String = lines
-                        .iter()
-                        .map(|line| self.decode_line(line))
-                        .collect::<Vec<_>>()
-                        .join("");
+                    let full_decoded: String = if lines.is_empty() {
+                        String::new()
+                    } else {
+                        let num_cols = lines.iter().map(|l| l.len()).max().unwrap_or(0);
+                        let mut result = String::new();
+                        for col in 0..num_cols {
+                            // Read this column top-to-bottom
+                            let mut col_text: String = lines
+                                .iter()
+                                .map(|line| {
+                                    line.get(col)
+                                        .map(|&id| self.decode_id(id))
+                                        .unwrap_or_else(|| " ".to_string())
+                                })
+                                .collect();
+                            // Squash trailing spaces to a single space
+                            let trimmed_len = col_text.trim_end_matches(' ').len();
+                            if trimmed_len < col_text.len() {
+                                col_text.truncate(trimmed_len);
+                                col_text.push(' ');
+                            }
+                            result.push_str(&col_text);
+                        }
+                        result.trim_end().to_string()
+                    };
                     ui.monospace(&full_decoded);
 
                     ui.add_space(12.0);
