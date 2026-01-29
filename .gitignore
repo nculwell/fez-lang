@@ -3,3 +3,4 @@ Cargo.lock
 *~
 .*.swp
 glyph_map.png
+mappings.json
