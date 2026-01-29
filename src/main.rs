@@ -270,6 +270,18 @@ impl eframe::App for GlyphMapperApp {
                     };
                     ui.monospace(&full_decoded);
 
+                    // Show word lengths
+                    let word_lengths: Vec<usize> = full_decoded
+                        .split_whitespace()
+                        .map(|w| w.len())
+                        .collect();
+                    let lengths_str = word_lengths
+                        .iter()
+                        .map(|n| n.to_string())
+                        .collect::<Vec<_>>()
+                        .join("-");
+                    ui.monospace(format!("({})", lengths_str));
+
                     ui.add_space(12.0);
                 }
             });
