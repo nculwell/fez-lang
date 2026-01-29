@@ -245,14 +245,14 @@ impl eframe::App for GlyphMapperApp {
                         self.selected_glyph = Some(id);
                     }
 
-                    // Summary: decode vertically (top-to-bottom, left-to-right)
+                    // Summary: decode vertically (top-to-bottom, right-to-left)
                     ui.add_space(8.0);
                     let full_decoded: String = if lines.is_empty() {
                         String::new()
                     } else {
                         let num_cols = lines.iter().map(|l| l.len()).max().unwrap_or(0);
                         let mut result = String::new();
-                        for col in 0..num_cols {
+                        for col in (0..num_cols).rev() {
                             // Read this column top-to-bottom
                             let mut col_text: String = lines
                                 .iter()
