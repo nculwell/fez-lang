@@ -24,6 +24,7 @@ impl GlyphMapperApp {
         let dir = Path::new("text_images");
 
         let mut registry = CharacterRegistry::new();
+        preload_bitmaps_from_mappings(&mut registry);
         let mut decoded_texts = Vec::new();
 
         if dir.exists() {
@@ -332,6 +333,49 @@ fn save_mappings(mappings: &HashMap<u32, char>, registry: &CharacterRegistry) {
             eprintln!("Saved {} mappings to {}", bitmap_mappings.len(), MAPPINGS_FILE);
         }
     }
+}
+
+/// Preload bitmaps from the mapping file into the registry before scanning images.
+/// This ensures glyphs get consistent IDs across runs.
+fn preload_bitmaps_from_mappings(registry: &mut CharacterRegistry) {
+    let path = Path::new(MAPPINGS_FILE);
+    if !path.exists() {
+        return;
+    }
+
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    // Only v2 format has bitmaps
+    if json.get("version").and_then(|v| v.as_u64()) != Some(2) {
+        return;
+    }
+
+    let mappings_obj = match json.get("mappings") {
+        Some(m) => m,
+        None => return,
+    };
+
+    let bitmap_map: HashMap<String, String> = match serde_json::from_value(mappings_obj.clone()) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+
+    let mut count = 0;
+    for bitmap_str in bitmap_map.keys() {
+        if let Some(bitmap) = string_to_bitmap(bitmap_str) {
+            registry.get_or_assign_id(bitmap);
+            count += 1;
+        }
+    }
+    eprintln!("Preloaded {} bitmaps from mappings file", count);
 }
 
 fn load_mappings(registry: &CharacterRegistry) -> HashMap<u32, char> {
