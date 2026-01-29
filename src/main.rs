@@ -263,8 +263,7 @@ impl eframe::App for GlyphMapperApp {
                                 })
                                 .collect();
                             // Squash trailing spaces to a single space
-                            let trimmed_len = col_text.trim_end_matches(' ').len();
-                            col_text.truncate(trimmed_len);
+                            col_text = col_text.trim_end_matches(' ').to_string();
                             col_text.push(' ');
                             result.push_str(&col_text);
                         }
