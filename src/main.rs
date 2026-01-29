@@ -66,6 +66,48 @@ impl GlyphMapperApp {
         }
     }
 
+    fn rescan_images(&mut self) {
+        let dir = Path::new("text_images");
+
+        self.registry = CharacterRegistry::new();
+        preload_bitmaps_from_mappings(&mut self.registry);
+        self.decoded_texts.clear();
+
+        if dir.exists() {
+            let mut image_files: Vec<_> = fs::read_dir(dir)
+                .map(|rd| {
+                    rd.filter_map(|entry| entry.ok())
+                        .map(|entry| entry.path())
+                        .filter(|path| {
+                            path.extension()
+                                .map(|ext| {
+                                    let ext = ext.to_ascii_lowercase();
+                                    ext == "jpg" || ext == "jpeg" || ext == "png"
+                                })
+                                .unwrap_or(false)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            image_files.sort();
+
+            for path in &image_files {
+                let filename = path.file_name().unwrap().to_string_lossy().to_string();
+                if let Ok(lines) = parse_image(path, &mut self.registry) {
+                    self.decoded_texts.push((filename, lines));
+                }
+            }
+        }
+
+        // Reload mappings with new registry IDs
+        self.mappings = load_mappings(&self.registry);
+
+        // Force texture reload
+        self.glyph_textures.clear();
+        self.textures_loaded = false;
+    }
+
     fn load_textures(&mut self, ctx: &egui::Context) {
         if self.textures_loaded {
             return;
@@ -130,6 +172,9 @@ impl eframe::App for GlyphMapperApp {
                 }
                 if ui.button("Load Mappings").clicked() {
                     self.mappings = load_mappings(&self.registry);
+                }
+                if ui.button("Rescan Images").clicked() {
+                    self.rescan_images();
                 }
                 ui.separator();
                 ui.label(format!("{} glyphs detected", self.registry.next_id));
