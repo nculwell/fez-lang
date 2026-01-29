@@ -53,7 +53,7 @@ impl GlyphMapperApp {
             }
         }
 
-        let mappings = load_mappings();
+        let mappings = load_mappings(&registry);
 
         GlyphMapperApp {
             registry,
@@ -125,10 +125,10 @@ impl eframe::App for GlyphMapperApp {
                 ui.heading("Fez Glyph Mapper");
                 ui.separator();
                 if ui.button("Save Mappings").clicked() {
-                    save_mappings(&self.mappings);
+                    save_mappings(&self.mappings, &self.registry);
                 }
                 if ui.button("Load Mappings").clicked() {
-                    self.mappings = load_mappings();
+                    self.mappings = load_mappings(&self.registry);
                 }
                 ui.separator();
                 ui.label(format!("{} glyphs detected", self.registry.next_id));
@@ -290,22 +290,51 @@ impl eframe::App for GlyphMapperApp {
     }
 }
 
-fn save_mappings(mappings: &HashMap<u32, char>) {
-    let string_map: HashMap<String, String> = mappings
+/// Convert a bitmap to a binary string (25 chars of '0' and '1')
+fn bitmap_to_string(bitmap: &[u8]) -> String {
+    bitmap.iter().map(|&b| if b == 0 { '0' } else { '1' }).collect()
+}
+
+/// Convert a binary string back to a bitmap
+fn string_to_bitmap(s: &str) -> Option<Vec<u8>> {
+    if s.len() != 25 {
+        return None;
+    }
+    s.chars()
+        .map(|c| match c {
+            '0' => Some(0u8),
+            '1' => Some(1u8),
+            _ => None,
+        })
+        .collect()
+}
+
+fn save_mappings(mappings: &HashMap<u32, char>, registry: &CharacterRegistry) {
+    // Build v2 format: bitmap string -> character
+    let bitmap_mappings: HashMap<String, String> = mappings
         .iter()
-        .map(|(&id, &c)| (id.to_string(), c.to_string()))
+        .filter_map(|(&id, &c)| {
+            registry.bitmaps.get(id as usize).map(|bitmap| {
+                (bitmap_to_string(bitmap), c.to_string())
+            })
+        })
         .collect();
 
-    if let Ok(json) = serde_json::to_string_pretty(&string_map) {
+    let v2_data = serde_json::json!({
+        "version": 2,
+        "mappings": bitmap_mappings
+    });
+
+    if let Ok(json) = serde_json::to_string_pretty(&v2_data) {
         if let Err(e) = fs::write(MAPPINGS_FILE, json) {
             eprintln!("Failed to save mappings: {}", e);
         } else {
-            eprintln!("Saved mappings to {}", MAPPINGS_FILE);
+            eprintln!("Saved {} mappings to {}", bitmap_mappings.len(), MAPPINGS_FILE);
         }
     }
 }
 
-fn load_mappings() -> HashMap<u32, char> {
+fn load_mappings(registry: &CharacterRegistry) -> HashMap<u32, char> {
     let path = Path::new(MAPPINGS_FILE);
     if !path.exists() {
         return HashMap::new();
@@ -316,19 +345,73 @@ fn load_mappings() -> HashMap<u32, char> {
         Err(_) => return HashMap::new(),
     };
 
-    let string_map: HashMap<String, String> = match serde_json::from_str(&content) {
+    let json: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return HashMap::new(),
+    };
+
+    // Check for version field to determine format
+    if let Some(version) = json.get("version").and_then(|v| v.as_u64()) {
+        if version == 2 {
+            // V2 format: bitmap string -> character
+            return load_mappings_v2(&json, registry);
+        }
+    }
+
+    // V1 format (legacy): ID -> character
+    load_mappings_v1(&json)
+}
+
+fn load_mappings_v1(json: &serde_json::Value) -> HashMap<u32, char> {
+    let string_map: HashMap<String, String> = match serde_json::from_value(json.clone()) {
         Ok(m) => m,
         Err(_) => return HashMap::new(),
     };
 
-    string_map
+    let mappings: HashMap<u32, char> = string_map
         .iter()
         .filter_map(|(id_str, char_str)| {
             let id: u32 = id_str.parse().ok()?;
             let c: char = char_str.chars().next()?;
             Some((id, c))
         })
-        .collect()
+        .collect();
+
+    eprintln!("Loaded {} mappings (v1 format)", mappings.len());
+    mappings
+}
+
+fn load_mappings_v2(json: &serde_json::Value, registry: &CharacterRegistry) -> HashMap<u32, char> {
+    let mappings_obj = match json.get("mappings") {
+        Some(m) => m,
+        None => return HashMap::new(),
+    };
+
+    let bitmap_map: HashMap<String, String> = match serde_json::from_value(mappings_obj.clone()) {
+        Ok(m) => m,
+        Err(_) => return HashMap::new(),
+    };
+
+    // Build reverse lookup: bitmap -> ID
+    let bitmap_to_id: HashMap<Vec<u8>, u32> = registry
+        .bitmaps
+        .iter()
+        .enumerate()
+        .map(|(id, bitmap)| (bitmap.clone(), id as u32))
+        .collect();
+
+    let mappings: HashMap<u32, char> = bitmap_map
+        .iter()
+        .filter_map(|(bitmap_str, char_str)| {
+            let bitmap = string_to_bitmap(bitmap_str)?;
+            let id = bitmap_to_id.get(&bitmap)?;
+            let c = char_str.chars().next()?;
+            Some((*id, c))
+        })
+        .collect();
+
+    eprintln!("Loaded {} mappings (v2 format, {} in file)", mappings.len(), bitmap_map.len());
+    mappings
 }
 
 fn setup_fonts(ctx: &egui::Context) {
