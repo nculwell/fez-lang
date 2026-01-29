@@ -231,8 +231,12 @@ impl eframe::App for GlyphMapperApp {
                                 ui.separator();
                                 ui.add_space(10.0);
 
-                                // Right side: show decoded text
-                                let decoded = self.decode_line(line);
+                                // Right side: show decoded text with spacing for column visibility
+                                let decoded: String = line
+                                    .iter()
+                                    .map(|&id| self.decode_id(id))
+                                    .collect::<Vec<_>>()
+                                    .join("   ");
                                 ui.monospace(&decoded);
                             });
                         }
@@ -260,10 +264,8 @@ impl eframe::App for GlyphMapperApp {
                                 .collect();
                             // Squash trailing spaces to a single space
                             let trimmed_len = col_text.trim_end_matches(' ').len();
-                            if trimmed_len < col_text.len() {
-                                col_text.truncate(trimmed_len);
-                                col_text.push(' ');
-                            }
+                            col_text.truncate(trimmed_len);
+                            col_text.push(' ');
                             result.push_str(&col_text);
                         }
                         result.trim_end().to_string()
