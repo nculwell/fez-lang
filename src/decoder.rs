@@ -91,8 +91,10 @@ struct ImageLayout {
     v_stride: u32,
     x_offset: u32,
     y_offset: u32,
-    chars_per_row: u32,
-    num_rows: u32,
+    /// Detected column regions: (start_x, width) for each non-uniform column
+    col_regions: Vec<(u32, u32)>,
+    /// Detected row regions: (start_y, height) for each non-uniform row
+    row_regions: Vec<(u32, u32)>,
     luma_threshold: u8,
 }
 
@@ -376,23 +378,6 @@ fn detect_layout(img: &image::GrayImage, method: &GrayMethod) -> Option<ImageLay
         char_height
     };
 
-    // Calculate how many glyphs fit in the image based on stride
-    // This handles cases where some rows/columns contain only spaces (uniform)
-    // or where the last row extends to the edge without a trailing gap
-    let chars_per_row = if h_stride > 0 {
-        let available_width = width - x_offset;
-        // Add (h_stride - 1) to round up, ensuring we count partial glyphs at the edge
-        (available_width + h_stride - char_width) / h_stride
-    } else {
-        col_regions.len() as u32
-    };
-    let num_rows = if v_stride > 0 {
-        let available_height = height - y_offset;
-        (available_height + v_stride - char_height) / v_stride
-    } else {
-        row_regions.len() as u32
-    };
-
     Some(ImageLayout {
         char_width,
         char_height,
@@ -400,8 +385,8 @@ fn detect_layout(img: &image::GrayImage, method: &GrayMethod) -> Option<ImageLay
         v_stride,
         x_offset,
         y_offset,
-        chars_per_row,
-        num_rows,
+        col_regions,
+        row_regions,
         luma_threshold,
     })
 }
@@ -508,9 +493,9 @@ pub fn parse_image(
     };
 
     eprintln!(
-        "  Layout: {}x{} glyphs, char size {}x{}, stride {}x{}, offset ({}, {})",
-        layout.chars_per_row,
-        layout.num_rows,
+        "  Layout: {}x{} detected regions, char size {}x{}, stride {}x{}, offset ({}, {})",
+        layout.col_regions.len(),
+        layout.row_regions.len(),
         layout.char_width,
         layout.char_height,
         layout.h_stride,
@@ -522,22 +507,76 @@ pub fn parse_image(
     let h_stride = layout.h_stride;
     let v_stride = layout.v_stride;
 
-    // First pass: extract all bitmaps from the image
-    let mut bitmaps: Vec<Vec<Bitmap>> = Vec::new();
-    for row in 0..layout.num_rows {
-        let mut line_bitmaps: Vec<Bitmap> = Vec::new();
-        let y = layout.y_offset + row * v_stride;
+    // Calculate expected grid positions based on stride, detecting spaces in gaps
+    // A position has a glyph if there's a detected region near it; otherwise it's a space
+    let tolerance = layout.char_height / 2;
 
-        for col in 0..layout.chars_per_row {
-            let x = layout.x_offset + col * h_stride;
-            let bitmap = extract_character(
-                &gray,
-                x,
-                y,
-                layout.char_width,
-                layout.char_height,
-                layout.luma_threshold,
-            );
+    // Find row positions: either detected regions or spaces where gaps exist
+    let mut row_positions: Vec<Option<u32>> = Vec::new(); // None = space row, Some(y) = glyph row
+    let mut region_idx = 0;
+    let mut expected_y = layout.y_offset;
+    while expected_y + layout.char_height <= gray.height() {
+        // Check if there's a detected row region near this expected position
+        let found_region = if region_idx < layout.row_regions.len() {
+            let (region_y, _) = layout.row_regions[region_idx];
+            if region_y <= expected_y + tolerance {
+                region_idx += 1;
+                Some(region_y)
+            } else {
+                None // Gap - this is a space row
+            }
+        } else {
+            None // No more regions
+        };
+        row_positions.push(found_region);
+        expected_y += v_stride;
+    }
+
+    // Find column positions similarly
+    let mut col_positions: Vec<Option<u32>> = Vec::new(); // None = space col, Some(x) = glyph col
+    let mut region_idx = 0;
+    let mut expected_x = layout.x_offset;
+    let col_tolerance = layout.char_width / 2;
+    while expected_x + layout.char_width <= gray.width() {
+        let found_region = if region_idx < layout.col_regions.len() {
+            let (region_x, _) = layout.col_regions[region_idx];
+            if region_x <= expected_x + col_tolerance {
+                region_idx += 1;
+                Some(region_x)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        col_positions.push(found_region);
+        expected_x += h_stride;
+    }
+
+    eprintln!(
+        "  Grid: {}x{} (with spaces)",
+        col_positions.len(),
+        row_positions.len()
+    );
+
+    // First pass: extract all bitmaps from the image
+    let empty_bitmap = vec![0u8; (GLYPH_WIDTH * GLYPH_HEIGHT) as usize];
+    let mut bitmaps: Vec<Vec<Bitmap>> = Vec::new();
+    for row_pos in &row_positions {
+        let mut line_bitmaps: Vec<Bitmap> = Vec::new();
+
+        for col_pos in &col_positions {
+            let bitmap = match (row_pos, col_pos) {
+                (Some(y), Some(x)) => extract_character(
+                    &gray,
+                    *x,
+                    *y,
+                    layout.char_width,
+                    layout.char_height,
+                    layout.luma_threshold,
+                ),
+                _ => empty_bitmap.clone(), // Space
+            };
             line_bitmaps.push(bitmap);
         }
         bitmaps.push(line_bitmaps);
@@ -551,24 +590,32 @@ pub fn parse_image(
     // }
 
     // If the registry already has characters, check if this image is inverted
+    // Only consider non-empty bitmaps (spaces always match and shouldn't affect inversion detection)
     if registry.next_id > 1 {
-        let matches = bitmaps
+        let non_empty_bitmaps: Vec<&Bitmap> = bitmaps
             .iter()
             .flatten()
+            .filter(|b| **b != empty_bitmap)
+            .collect();
+
+        let matches = non_empty_bitmaps
+            .iter()
             .filter(|b| registry.contains(b))
             .count();
 
         eprintln!(
             "  Matches with existing glyphs: {}/{}",
-            matches, total_glyphs
+            matches, non_empty_bitmaps.len()
         );
 
-        if matches == 0 {
+        if matches == 0 && !non_empty_bitmaps.is_empty() {
             eprintln!("  Flipping all bitmaps (image appears inverted)");
-            // No matches found - flip all bitmaps
+            // No matches found - flip all non-empty bitmaps
             for line in &mut bitmaps {
                 for bitmap in line {
-                    *bitmap = flip_bitmap(bitmap);
+                    if *bitmap != empty_bitmap {
+                        *bitmap = flip_bitmap(bitmap);
+                    }
                 }
             }
         }
