@@ -87,8 +87,8 @@ fn to_gray_hybrid(img: &DynamicImage) -> (GrayImage, GrayMethod) {
 struct ImageLayout {
     char_width: u32,
     char_height: u32,
-    h_gap: u32,
-    v_gap: u32,
+    h_stride: u32,
+    v_stride: u32,
     x_offset: u32,
     y_offset: u32,
     chars_per_row: u32,
@@ -364,27 +364,44 @@ fn detect_layout(img: &image::GrayImage, method: &GrayMethod) -> Option<ImageLay
     let char_width = col_regions[0].1;
     let char_height = row_regions[0].1;
 
-    // Calculate gaps from spacing between glyphs (if there are multiple)
-    let h_gap = if col_regions.len() > 1 {
-        col_regions[1].0 - col_regions[0].0 - char_width
+    // Calculate stride from spacing between glyphs (if there are multiple)
+    let h_stride = if col_regions.len() > 1 {
+        col_regions[1].0 - col_regions[0].0
     } else {
-        0
+        char_width
     };
-    let v_gap = if row_regions.len() > 1 {
-        row_regions[1].0 - row_regions[0].0 - char_height
+    let v_stride = if row_regions.len() > 1 {
+        row_regions[1].0 - row_regions[0].0
     } else {
-        0
+        char_height
+    };
+
+    // Calculate how many glyphs fit in the image based on stride
+    // This handles cases where some rows/columns contain only spaces (uniform)
+    // or where the last row extends to the edge without a trailing gap
+    let chars_per_row = if h_stride > 0 {
+        let available_width = width - x_offset;
+        // Add (h_stride - 1) to round up, ensuring we count partial glyphs at the edge
+        (available_width + h_stride - char_width) / h_stride
+    } else {
+        col_regions.len() as u32
+    };
+    let num_rows = if v_stride > 0 {
+        let available_height = height - y_offset;
+        (available_height + v_stride - char_height) / v_stride
+    } else {
+        row_regions.len() as u32
     };
 
     Some(ImageLayout {
         char_width,
         char_height,
-        h_gap,
-        v_gap,
+        h_stride,
+        v_stride,
         x_offset,
         y_offset,
-        chars_per_row: col_regions.len() as u32,
-        num_rows: row_regions.len() as u32,
+        chars_per_row,
+        num_rows,
         luma_threshold,
     })
 }
@@ -491,19 +508,19 @@ pub fn parse_image(
     };
 
     eprintln!(
-        "  Layout: {}x{} glyphs, char size {}x{}, gap {}x{}, offset ({}, {})",
+        "  Layout: {}x{} glyphs, char size {}x{}, stride {}x{}, offset ({}, {})",
         layout.chars_per_row,
         layout.num_rows,
         layout.char_width,
         layout.char_height,
-        layout.h_gap,
-        layout.v_gap,
+        layout.h_stride,
+        layout.v_stride,
         layout.x_offset,
         layout.y_offset
     );
 
-    let h_stride = layout.char_width + layout.h_gap;
-    let v_stride = layout.char_height + layout.v_gap;
+    let h_stride = layout.h_stride;
+    let v_stride = layout.v_stride;
 
     // First pass: extract all bitmaps from the image
     let mut bitmaps: Vec<Vec<Bitmap>> = Vec::new();
