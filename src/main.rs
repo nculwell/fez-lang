@@ -17,6 +17,7 @@ struct GlyphMapperApp {
     selected_glyph: Option<u32>,
     glyph_textures: Vec<egui::TextureHandle>,
     textures_loaded: bool,
+    sorted_glyph_order: Option<Vec<u32>>,
 }
 
 impl GlyphMapperApp {
@@ -63,6 +64,7 @@ impl GlyphMapperApp {
             selected_glyph: None,
             glyph_textures: Vec::new(),
             textures_loaded: false,
+            sorted_glyph_order: None,
         }
     }
 
@@ -106,6 +108,7 @@ impl GlyphMapperApp {
         // Force texture reload
         self.glyph_textures.clear();
         self.textures_loaded = false;
+        self.sorted_glyph_order = None;
     }
 
     fn load_textures(&mut self, ctx: &egui::Context) {
@@ -184,20 +187,46 @@ impl eframe::App for GlyphMapperApp {
         egui::SidePanel::left("glyph_panel")
             .default_width(350.0)
             .show(ctx, |ui| {
-                ui.heading("Glyph Palette");
+                ui.horizontal(|ui| {
+                    ui.heading("Glyph Palette");
+                    if ui.button("Sort").clicked() {
+                        // Build sorted order: mapped glyphs first (sorted by character), then unmapped
+                        let mut mapped: Vec<(u32, char)> = self.mappings.iter()
+                            .filter(|(&id, _)| id != 0)
+                            .map(|(&id, &c)| (id, c))
+                            .collect();
+                        mapped.sort_by_key(|&(_, c)| c);
+
+                        let mut unmapped: Vec<u32> = (1..self.glyph_textures.len() as u32)
+                            .filter(|id| !self.mappings.contains_key(id))
+                            .collect();
+                        unmapped.sort();
+
+                        let mut order: Vec<u32> = mapped.into_iter().map(|(id, _)| id).collect();
+                        order.extend(unmapped);
+                        self.sorted_glyph_order = Some(order);
+                    }
+                });
                 ui.separator();
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let cols = 8;
+
+                    // Get glyph IDs in display order
+                    let glyph_ids: Vec<u32> = if let Some(ref order) = self.sorted_glyph_order {
+                        order.clone()
+                    } else {
+                        (1..self.glyph_textures.len() as u32).collect()
+                    };
+
                     egui::Grid::new("glyph_grid")
                         .spacing([4.0, 4.0])
                         .show(ui, |ui| {
-                            for (id, texture) in self.glyph_textures.iter().enumerate() {
-                                let id = id as u32;
-                                if id == 0 {
-                                    // Skip the space glyph in the palette
-                                    continue;
-                                }
+                            for (idx, &id) in glyph_ids.iter().enumerate() {
+                                let texture = match self.glyph_textures.get(id as usize) {
+                                    Some(t) => t,
+                                    None => continue,
+                                };
                                 let is_selected = self.selected_glyph == Some(id);
                                 let mapping_str = if let Some(&c) = self.mappings.get(&id) {
                                     c.to_string()
@@ -218,7 +247,7 @@ impl eframe::App for GlyphMapperApp {
                                     ui.label(&mapping_str);
                                 });
 
-                                if id % cols == 0 {
+                                if (idx + 1) % cols == 0 {
                                     ui.end_row();
                                 }
                             }
